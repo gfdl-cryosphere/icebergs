@@ -1510,15 +1510,12 @@ end subroutine read_restart_bonds
 
 !> Reading calving and gridded restart data
 subroutine read_restart_calving(bergs)
-use random_numbers_mod, only: initializeRandomNumberStream, getRandomNumbers, randomNumberStream
 ! Arguments
 type(icebergs), pointer :: bergs !< Icebergs container
 ! Local variables
 integer :: k,i,j
 character(len=37) :: filename, actual_filename
 type(icebergs_gridded), pointer :: grd
-real, allocatable, dimension(:,:) :: randnum
-type(randomNumberStream) :: rns
 type(FmsNetcdfDomainFile_t) :: fileobj !< Fms2_io fileobj
 
   ! For convenience
@@ -1532,7 +1529,15 @@ type(FmsNetcdfDomainFile_t) :: fileobj !< Fms2_io fileobj
     call register_axis_wrapper(fileobj)
     if (verbose.and.mpp_pe().eq.mpp_root_pe()) write(*,'(2a)') &
      'KID, read_restart_calving: reading ',filename
-    call read_data(fileobj, 'stored_ice', grd%stored_ice)
+    if (variable_exists(fileobj, 'stored_ice')) then
+      if (verbose.and.mpp_pe().eq.mpp_root_pe()) write(*,'(a)') &
+       'KID, read_restart_calving: reading stored_ice from restart file.'
+      call read_data(fileobj, 'stored_ice', grd%stored_ice)
+    else
+      if (verbose.and.mpp_pe().eq.mpp_root_pe()) write(*,'(a)') &
+     'KID, read_restart_calving: stored_ice WAS NOT FOUND in the file. Setting to random numbers'
+      call init_random_stored_ice(bergs, grd)
+    endif
     if (variable_exists(fileobj, 'stored_heat')) then
       if (verbose.and.mpp_pe().eq.mpp_root_pe()) write(*,'(a)') &
        'KID, read_restart_calving: reading stored_heat from restart file.'
@@ -1572,40 +1577,7 @@ type(FmsNetcdfDomainFile_t) :: fileobj !< Fms2_io fileobj
     bergs%restarted=.true.
     call close_file(fileobj)
   else
-    if (verbose.and.mpp_pe().eq.mpp_root_pe()) write(*,'(a)') &
-     'KID, read_restart_calving: initializing stored ice to random numbers'
-    if ( make_calving_reproduce ) then
-       allocate(randnum(1,nclasses))
-       do j=grd%jsc, grd%jec
-          do i=grd%isc, grd%iec
-             rns=initializeRandomNumberStream(i+10000*j)
-             call getRandomNumbers(rns,randnum(1,:))
-             do k=1, nclasses
-               if (grd%lat(i,j)<bergs%ns_trans_lat) then
-                 grd%stored_ice(i,j,k)=randnum(1,k) * grd%msk(i,j) * bergs%initial_mass_s(k) * bergs%mass_scaling_s(k)
-               else
-                 grd%stored_ice(i,j,k)=randnum(1,k) * grd%msk(i,j) * bergs%initial_mass_n(k) * bergs%mass_scaling_n(k)
-               endif
-             end do
-          end do
-       end do
-    else
-       allocate(randnum(grd%jsc:grd%jec,nclasses))
-       do i=grd%isc, grd%iec
-          rns = initializeRandomNumberStream(i)
-          call getRandomNumbers(rns,randnum)
-          do k=1, nclasses
-            where (grd%lat(i,grd%jsc:grd%jec)<bergs%ns_trans_lat)
-             grd%stored_ice(i,grd%jsc:grd%jec,k) = randnum(:,k) * grd%msk(i,grd%jsc:grd%jec) * &
-               & bergs%initial_mass_s(k) * bergs%mass_scaling_s(k)
-           elsewhere
-             grd%stored_ice(i,grd%jsc:grd%jec,k) = randnum(:,k) * grd%msk(i,grd%jsc:grd%jec) * &
-               & bergs%initial_mass_n(k) * bergs%mass_scaling_n(k)
-           end where
-          end do
-       end do
-    end if
-    deallocate(randnum)
+    call init_random_stored_ice(bergs, grd)
   endif
 
   call grd_chksum3(bergs%grd, bergs%grd%stored_ice, 'read_restart_calving, stored_ice')
@@ -1623,6 +1595,52 @@ type(FmsNetcdfDomainFile_t) :: fileobj !< Fms2_io fileobj
   call mpp_sum( bergs%floating_heat_start )
 
 end subroutine read_restart_calving
+
+subroutine init_random_stored_ice(bergs, grd)
+use random_numbers_mod, only: initializeRandomNumberStream, getRandomNumbers, randomNumberStream
+  ! Arguments
+  type(icebergs), pointer :: bergs !< Icebergs container
+  type(icebergs_gridded), pointer :: grd
+  ! Local variables
+  integer :: k,i,j
+  real, allocatable, dimension(:,:) :: randnum
+  type(randomNumberStream) :: rns
+
+  if (verbose.and.mpp_pe().eq.mpp_root_pe()) write(*,'(a)') &
+    'KID, read_restart_calving: initializing stored ice to random numbers'
+  if ( make_calving_reproduce ) then
+    allocate(randnum(1,nclasses))
+    do j=grd%jsc, grd%jec
+      do i=grd%isc, grd%iec
+        rns=initializeRandomNumberStream(i+10000*j)
+        call getRandomNumbers(rns,randnum(1,:))
+        do k=1, nclasses
+          if (grd%lat(i,j)<bergs%ns_trans_lat) then
+            grd%stored_ice(i,j,k)=randnum(1,k) * grd%msk(i,j) * bergs%initial_mass_s(k) * bergs%mass_scaling_s(k)
+          else
+            grd%stored_ice(i,j,k)=randnum(1,k) * grd%msk(i,j) * bergs%initial_mass_n(k) * bergs%mass_scaling_n(k)
+          endif
+        end do
+      end do
+    end do
+  else
+    allocate(randnum(grd%jsc:grd%jec,nclasses))
+    do i=grd%isc, grd%iec
+      rns = initializeRandomNumberStream(i)
+      call getRandomNumbers(rns,randnum)
+      do k=1, nclasses
+        where (grd%lat(i,grd%jsc:grd%jec)<bergs%ns_trans_lat)
+          grd%stored_ice(i,grd%jsc:grd%jec,k) = randnum(:,k) * grd%msk(i,grd%jsc:grd%jec) * &
+            & bergs%initial_mass_s(k) * bergs%mass_scaling_s(k)
+        elsewhere
+          grd%stored_ice(i,grd%jsc:grd%jec,k) = randnum(:,k) * grd%msk(i,grd%jsc:grd%jec) * &
+            & bergs%initial_mass_n(k) * bergs%mass_scaling_n(k)
+        end where
+      end do
+    end do
+  end if
+  deallocate(randnum)
+end subroutine init_random_stored_ice
 
 !> Read ocean depth from file
 subroutine read_ocean_depth(grd)
