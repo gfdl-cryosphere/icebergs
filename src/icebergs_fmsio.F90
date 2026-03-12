@@ -120,8 +120,8 @@ character(len=*), intent(in), optional :: time_stamp !< Timestamp for restart fi
 ! Local variables
 type(bond), pointer :: current_bond
 integer :: i,j,id
-character(len=35) :: filename
-character(len=35) :: filename_bonds
+character(len=256) :: filename
+character(len=256) :: filename_bonds
 type(iceberg), pointer :: this=>NULL()
 integer :: stderrunit
 !I/O vars
@@ -249,6 +249,7 @@ integer :: grdi, grdj
    endif
 
   filename = trim("icebergs.res.nc")
+  if (present(time_stamp)) filename = trim(filename)//trim(time_stamp)//'.nc'
   call set_domain(bergs%grd%domain)
   call register_restart_axis(bergs_restart,filename,'i',nbergs)
   call set_meta_global(bergs_restart,'file_format_major_version',ival=(/file_format_major_version/))
@@ -462,6 +463,7 @@ integer :: grdi, grdj
   endif
 
   call get_instance_filename("bonds_iceberg.res.nc", filename_bonds)
+  if (present(time_stamp)) filename_bonds = trim(filename_bonds)//trim(time_stamp)//'.nc'
   call set_domain(bergs%grd%domain)
   call register_restart_axis(bergs_bond_restart,filename,'i',nbonds)
   call set_meta_global(bergs_bond_restart,'file_format_major_version',ival=(/file_format_major_version/))
@@ -552,6 +554,7 @@ integer :: grdi, grdj
 
   ! Write stored ice
   filename='calving.res.nc'
+  if (present(time_stamp)) filename = trim(filename)//trim(time_stamp)//'.nc'
   if (verbose.and.mpp_pe().eq.mpp_root_pe()) write(stderrunit,'(2a)') 'KID, write_restart_bergs: writing ',filename
   call grd_chksum3(bergs%grd, bergs%grd%stored_ice, 'write stored_ice')
   call grd_chksum2(bergs%grd, bergs%grd%stored_heat, 'write stored_heat')
